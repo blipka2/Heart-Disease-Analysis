@@ -1,0 +1,239 @@
+---
+title: "An Analysis of UCI Heart Disease Data"
+author: "Ben Lipka (blipka2@illinois.edu)"
+date: "Due 11/11/2020"
+output:
+  html_document: 
+    theme: default
+    toc: yes
+---
+
+```{r, setup, include = FALSE}
+knitr::opts_chunk$set(echo = FALSE, fig.align = 'center')
+```
+
+```{r, load-packages, include = FALSE}
+# load packages
+```
+
+```{r read-full-data, warning = FALSE, message = FALSE}
+# read full data
+hd = readr::read_csv("data/hd.csv")
+```
+
+***
+
+## Abstract
+
+This analysis is designed to provide concrete and mathematical based guidance for doctors to decide whether or not to perform more invasive procedures on a patient to determine if they have heart disease. After much data preparation and manipulation, two different models were built; a decision tree, and a  logistic regression model. The logistic regression model, the more accurate of the two, resulted in an accuracy of over 76%. This model decision can act as a very useful tool for doctors to provide a proper prognosis for whether more invasive testing procedures should be used on a patient for heart disease. 
+
+***
+
+## Introduction
+
+For most of the era of modernized medicine, heart disease has remained the leading cause of death in the United States. Once an individual has heart disease, it is very dependent on the stage when determining the individual's prognosis. There are four stages, ranging from high risk of developing heart failure to advanced heart failure. Half of all people diagnosed with heart failure will survive beyond five years according to the CDC, yet that number will grow grimmer depending on the stage of discovery. Yet, there is a glaring issue when it comes to diagnosing heart disease in individuals: many of the tests for heart disease are very invasive and doctors stray away from them unless they believe there is a high risk present. This results in many individual's heart disease flying under the radar and further developing into more serious conditions. The goal of this analysis is to use existing, prepared data from the University of California, Irvine in 1998 to further understand ways to predict and model potential heart disease in individuals using demographics and non-invasive test results such as age, sex, ECG information, and much more.  
+
+***
+
+## Methods
+
+### Data
+
+The heart disease data for this analysis is a combination of multiple datasets from four locations: Cleveland, Hungary, Switzerland, and VA Long Beach. The four datasets were merged and a location variable was added to label where each observation was from. Additionally, the response variable, num, was altered to a categorical variable (i.e. v0 instead of 0, v1 instead of 1) and "?"s in the dataset were replaced with NAs. 
+
+A large number of observations in the dataset have several variables with NA values. Some variables are not useful, such as ca and thal, where over half of the observations have missing values. To deal with this, variables with over a third of missing values will be removed. However, before removing these NA values the data is split into testing and training datasets. 
+
+The process of splitting into training and testing datasets was completed through data partitioning. Then, NA values of greater than 30% present were removed. Additionally, character values like the response (num), location, cp, sex, and fbs variables were coerced to be factors for future modeling. 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# load packages
+library("tidyverse")
+library("caret")
+
+# split data 
+set.seed(42)
+trn_idx <- createDataPartition(hd$num, p = 0.80, list = TRUE)
+hd_trn <- hd[trn_idx$Resample1, ]
+hd_tst <- hd[-trn_idx$Resample1, ]
+
+# determine proportion of NAs in data
+na_prop <- function(x) {
+  mean(is.na(x))
+}
+
+# create dataset without columns containing more than 30% NAs
+hd_trn <- na.omit(hd_trn[, !sapply(hd_trn, na_prop) > 0.30])
+
+# coerce character variables to be factors
+hd_trn$num <- factor(hd_trn$num)
+hd_trn$location <- factor(hd_trn$location)
+hd_trn$cp <- factor(hd_trn$cp)
+hd_trn$sex <- factor(hd_trn$sex)
+hd_trn$fbs <- factor(hd_trn$fbs)
+
+hd_tst$num <- factor(hd_tst$num)
+hd_tst$location <- factor(hd_tst$location)
+hd_tst$cp <- factor(hd_tst$cp)
+hd_tst$sex <- factor(hd_tst$sex)
+hd_tst$fbs <- factor(hd_tst$fbs)
+```
+
+Before jumping into modeling, more exploration into the training dataset was performed. Below is a plot of resting bps vs. age colored by the individual's heart issues. The results of this are not incredibly interesting or surprising. 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+plot(trestbps ~ age, data = hd_trn, pch = 20, col = hd_trn$num)
+```
+
+However, replacing resting bps with cholestoral yields much more interesting results. Many individual's have cholestorals of 0, which implies there is "hidden" missing data. 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+plot(chol ~ age, data=hd_trn, pch=20, col=hd_trn$num)
+```
+
+The locations of 0 cholestoral all come from Cleveland or VA. To fix this, 0 cholestorals were replaced with NAs. 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+hd_trn[which(hd_trn$chol == 0), ]$chol = NA
+```
+
+Below is a brief overview of the training dataset.
+
+```{r, warning=FALSE}
+# summary of data w/ skimr library
+library("skimr")
+skim(hd_trn)
+```
+
+### Modeling
+
+After performing this deep dive into the data, it is time to begin fitting models. First, the data was further split 80/20 into estimation and validation datasets. The first model fitted was a decision tree on the estimation data. As seen in the confusion matrix below, the accuracy of this model is only around 58.65%. However, this number is a bit deceiving since there is a spectrum of heart disease. If we were to simply look at heart disease as a binary response, our prediction accuracy can actually be seen to be 75%, which is already much better. However, this can likely be improved. 
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# training with no NAs
+hd_trn_full <- na.omit(hd_trn)
+
+# estimation-validation split
+set.seed(42)
+est_idx <- createDataPartition(hd_trn_full$num, p=0.80, list=TRUE)
+hd_est <- hd_trn_full[est_idx$Resample1, ]
+hd_val <- hd_trn_full[-est_idx$Resample1, ]
+
+# mod fitting
+library(rpart)
+mod <- rpart(num ~ ., data=hd_est)
+
+# establishing first model-based baseline
+table(
+  actual = hd_val$num,
+  predicted = predict(mod, hd_val, type="class")
+)
+
+# calculate baseline accuracy
+mean(predict(mod, hd_val, type="class") == hd_val$num)
+1 - (11+15) / length(hd_val$num)
+```
+
+Since we are viewing the heart disease response variable as binary, a logistic regression model is a logical route. Performing the previous methodology with a binomial logistic regression model results in an 81.73% accuracy on the validation dataset. This is a notable increase from the previous model. 
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# create binary variable
+hd_est$num = factor(dplyr::case_when(
+  hd_est$num == "v0" ~ "no",
+  hd_est$num == "v1" ~ "yes",
+  hd_est$num == "v2" ~ "yes",
+  hd_est$num == "v3" ~ "yes",
+  hd_est$num == "v4" ~ "yes"
+))
+hd_val$num = factor(dplyr::case_when(
+  hd_val$num == "v0" ~ "no",
+  hd_val$num == "v1" ~ "yes",
+  hd_val$num == "v2" ~ "yes",
+  hd_val$num == "v3" ~ "yes",
+  hd_val$num == "v4" ~ "yes"
+))
+
+# mod fitting
+mod_log <- glm(num ~ ., data=hd_est, family = "binomial")
+
+# model confusion matrix
+table(hd_val$num,ifelse(predict(mod_log, hd_val,"response")>0.5,"yes","no"))
+
+
+# calculate baseline accuracy
+(46+39)/(46+39+9+10)
+
+```
+
+Finally, it is time to apply our model to the testing dataset. Removing the NA values from the testing data leaves us with quite a small sample, however we still would likely see our accuracy increase with more data available. 
+
+```{r, echo=FALSE, warning=FALSE,message=FALSE}
+# create binary variable
+hd_trn_full$num = factor(dplyr::case_when(
+  hd_trn_full$num == "v0" ~ "no",
+  hd_trn_full$num == "v1" ~ "yes",
+  hd_trn_full$num == "v2" ~ "yes",
+  hd_trn_full$num == "v3" ~ "yes",
+  hd_trn_full$num == "v4" ~ "yes"
+))
+hd_tst_full <- na.omit(hd_tst)
+hd_tst_full$num = factor(dplyr::case_when(
+  hd_tst_full$num == "v0" ~ "no",
+  hd_tst_full$num == "v1" ~ "yes",
+  hd_tst_full$num == "v2" ~ "yes",
+  hd_tst_full$num == "v3" ~ "yes",
+  hd_tst_full$num == "v4" ~ "yes"
+))
+
+
+# mod fitting
+mod_log_final <- glm(num ~ ., data=hd_trn, family = "binomial")
+
+```
+
+***
+
+## Results
+
+The final model performs at approximately 76.27% accuracy on the testing dataset. That is, this model can accurately predict the presence of heart disease in an individual 76.27% of the time. 
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# model confusion matrix
+table(hd_tst_full$num,ifelse(predict(mod_log_final, hd_tst_full,"response")>0.5,"yes","no"))
+
+
+# calculate baseline accuracy
+(25+20)/(25+20+9+5)
+
+```
+***
+
+## Discussion
+
+The original dilemna that provided motivation for this analysis was the invasive nature of some of the tests used to confirm heart disease. Although there were some serious data issues with regards to length and missing values present, a prediction accuracy of over 75% is very powerful. 
+
+If an individual receives a "yes", there is over a 75% chance that the individual has heart disease. This would suggest that the individual should *definitely* recieve more invasive testing to confirm or deny that notion.
+
+On the flip side, if an individual receives a "no", there is over a 75% chance that they do not have heart disease. Most people may not be able to rest assured given the uncertainty of that number, however it definitely can guide a doctor's decision in the level of invasive procedure to perform. 
+
+At the end of the day, these numbers are simply meant to guide a doctor's decision on the necessity of more invasive heart disease detection factors, and they definitely provide a fairly strong basis for that decision. 
+
+***
+
+## Appendix
+
+### Description of variables in dataset
+
+- `age` = age in years
+- `sex` = sex: sex (1 = male; 0 = female)
+- `cp` = chest pain type
+- `trestbps` = resting blood pressure (in mm Hg on admission to the hospital)
+- `chol` = serum cholestoral in mg/dl
+- `fbs` = (fasting blood sugar > 120 mg/dl) (1 = true; 0 = false)
+- `restecg` = resting electrocardiographic results
+- `thalach` = maximum heart rate achieved
+- `exang` = exercise induced angina (1 = yes; 0 = no)
+- `oldpeak` = ST depression induced by exercise relative to rest
+- `slope` = the slope of the peak exercise ST segment
+- `ca` = number of major vessels (0-3) colored by flourosopy
+- `thal` = 3 = normal; 6 = fixed defect; 7 = reversable defect
+- `num` = diagnosis of heart disease (angiographic disease status)
